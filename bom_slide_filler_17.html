@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>BoM Slide Filler — Territory Scorecard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; background: #f7f7f5; color: #111; }
+h1 { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+.sub { font-size: 13px; color: #666; margin: 0 0 24px; }
+.card { background: #fff; border: 0.5px solid #e0e0e0; border-radius: 12px; overflow: hidden; }
+.card-pad { background: #fff; border: 0.5px solid #e0e0e0; border-radius: 12px; padding: 16px 20px; }
+select, input[type=text], textarea { background: #fff; border: 0.5px solid #ccc; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit; color: #111; outline: none; width: 100%; }
+select:focus, input:focus, textarea:focus { border-color: #555; }
+button { background: transparent; border: 0.5px solid #ccc; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-family: inherit; cursor: pointer; color: #111; }
+button:hover { background: #f5f5f5; }
+.btn-primary { background: #E8F5E9; border-color: #A5D6A7; color: #1B5E20; font-weight: 500; }
+.btn-primary:hover { background: #C8E6C9; }
+label { display: block; font-size: 12px; font-weight: 500; color: #666; margin-bottom: 5px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.drop-zone { border: 1.5px dashed #ccc; border-radius: 10px; padding: 16px 12px; text-align: center; cursor: pointer; background: #fafaf8; }
+.drop-zone:hover { border-color: #999; background: #f0f0ee; }
+.drop-zone.loaded { border-color: #A5D6A7; background: #F1F8E9; }
+table { width: 100%; border-collapse: collapse; }
+th { padding: 6px 10px; font-size: 11px; font-weight: 500; color: #666; background: #fafaf8; border-bottom: 0.5px solid #eee; text-align: right; }
+th.left { text-align: left; }
+td { padding: 5px 10px; font-size: 13px; border-bottom: 0.5px solid #eee; text-align: right; }
+td.left { text-align: left; }
+td.indent { text-align: left; padding-left: 22px; font-style: italic; color: #666; }
+tr.sec-row td { background: #fafaf8; font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+.badge { display: inline-block; background: #E040FB; color: #fff; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 4px; }
+.sourcing { background: #fafaf8; border: 0.5px solid #eee; border-radius: 12px; padding: 16px 20px; }
+.sourcing-label { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px; }
+.hl-item { border-left: 2px solid #ddd; padding-left: 12px; margin-bottom: 10px; line-height: 1.6; font-size: 13px; }
+.section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 10px; }
+.divider { border: none; border-top: 0.5px solid #eee; margin: 20px 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef } = React;
+
+const TERRITORIES = [
+  "FR - North, Alps & Central","FR - West & Paris","FR - South","FR",
+  "ES","US - Adventure and Rocky Mountain","US - Great Lake & Smoky Mountain",
+  "US - Southeast & Gulf","US - West Coast & Beach","US - Northeast Atlantic",
+  "US","CA","AU","GB","IT","DE","BR","MX & CCA","JP","KR",
+];
+
+// Column indices are resolved dynamically from the header row at runtime.
+// These are placeholders replaced by buildColIndex() before extraction.
+const CHN_STATIC = { LABEL:2, H1GOAL_LABEL:"H1 Goal", H1PAC_LABEL:"HTD pacing",
+  MONTH_START:16, YOY_START:38 };
+const AMB_STATIC = { LABEL:2, H1GOAL_LABEL:"H1 Goal", H1PAC_LABEL:"HTD pacing",
+  MONTH_START:12, YOY_START:999 };
+const REF_STATIC = { LABEL:2, MONTH_START:14, YOY_START:37 };
+
+// Build dynamic column index from header row 7 given a reporting month string
+function buildColIndex(rows, monthStr, monthStart, yoyStart) {
+  const MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  function parseLabel(s) {
+    // "Feb 26" -> {mon:1, yr:2026}, "Jan 25" -> {mon:0, yr:2025}
+    const [m,y] = s.trim().split(" ");
+    const mon = MONTHS[m.toLowerCase().slice(0,3)];
+    const yr = parseInt(y) + (parseInt(y) < 100 ? 2000 : 0);
+    return (mon !== undefined && !isNaN(yr)) ? {mon, yr} : null;
+  }
+  // Parse reporting month e.g. "February 2026"
+  const parts = monthStr.trim().split(" ");
+  const tgtMon = MONTHS[parts[0].toLowerCase().slice(0,3)];
+  const tgtYr = parseInt(parts[1]);
+  const prevMon = tgtMon === 0 ? 11 : tgtMon - 1;
+  const prevYr  = tgtMon === 0 ? tgtYr - 1 : tgtYr;
+  const ypMon   = tgtMon;
+  const ypYr    = tgtYr - 1;
+
+  const headerRow = rows[7] || [];
+  let cur=null, prev=null, yp=null, yoy=null;
+  let h1goal=null, h1pac=null;
+
+  headerRow.forEach((v, i) => {
+    const s = (v||"").trim();
+    const parsed = parseLabel(s);
+    if (parsed) {
+      const inMonth = i >= monthStart && i < yoyStart;
+      const inYoY   = i >= yoyStart;
+      if (parsed.mon===tgtMon  && parsed.yr===tgtYr  && inMonth && cur===null)  cur=i;
+      if (parsed.mon===prevMon && parsed.yr===prevYr  && inMonth && prev===null) prev=i;
+      if (parsed.mon===ypMon   && parsed.yr===ypYr    && inMonth && yp===null)   yp=i;
+      if (parsed.mon===tgtMon  && parsed.yr===tgtYr   && inYoY   && yoy===null)  yoy=i;
+    }
+  });
+
+  // Static label lookups for goal/pacing (same col regardless of month)
+  headerRow.forEach((v, i) => {
+    const s = (v||"").trim();
+    if (s === "H1 Goal"   && h1goal===null) h1goal=i;
+    if (s === "HTD pacing" && h1pac===null)  h1pac=i;
+  });
+
+  return { cur, prev, yp, yoy, h1goal, h1pac };
+}
+
+const CHN_SECTIONS = {
+  ftt:      "First Time Traffic (ex-Other)",
+  conn:     "User Connections",
+  totalNAL: "Total NALs",
+  nonMPNAL: "Total Non-Marketplace NALs",
+  totalNML: "NMLs (incl. NALs)",
+  mpNML:    "Marketplace New Managed Listings",
+  connAct:  "% Connections to Activation (90 days)",
+  nb:       "Nights Booked",
+  quality:  "Avg 5-star rating",
+  respRate: "Response rate",
+};
+
+const RATE_METRICS = new Set(["connAct","quality","respRate"]);
+
+// Territory name mapping: CHN name → Ambassador name
+const AMB_MAP = {
+  "FR - North, Alps & Central":"FR - North, Alps & Central",
+  "FR - West & Paris":"FR - West & Paris",
+  "FR - South":"FR - South",
+  "FR":"FR - Total",
+  "ES":"Spain & Portugal",
+  "US - Adventure and Rocky Mountain":"US - Adventure & Rocky Mountain",
+  "US - Great Lake & Smoky Mountain":"US - Great Lakes & Smoky Mountain",
+  "US - Southeast & Gulf":"US - Southeast & Gulf",
+  "US - West Coast & Beach":"US - West Coast & Beach",
+  "US - Northeast Atlantic":"US - Northeast Atlantic",
+  "US":"NAMER",
+  "CA":"Canada",
+  "AU":"ANZ",
+  "GB":"UKIN",
+  "IT":"Italy & SEE",
+  "DE":"DACH / CEE / CIS",
+  "BR":"Brazil",
+  "MX & CCA":"CCA",
+  "JP":"Japan",
+  "KR":"Korea",
+};
+
+// Territory name mapping: CHN name → Referrals name (differs from Ambassador for some)
+const REF_MAP = {
+  ...AMB_MAP,
+  "FR":"France Total",
+};
+
+// ── parsers ─────────────────────────────────────────────────────────────────
+
+function parseRawCSV(text) {
+  return text.split("\n").map(line => {
+    const cols=[]; let inQ=false, cur="";
+    for (const c of line) {
+      if (c==='"') inQ=!inQ;
+      else if (c===','&&!inQ) { cols.push(cur.trim()); cur=""; }
+      else cur+=c;
+    }
+    cols.push(cur.trim());
+    return cols;
+  });
+}
+
+function parseKeyedCSV(text) {
+  const lines=text.split("\n");
+  const headers=lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
+  return lines.slice(1).filter(l=>l.trim()).map(line=>{
+    const cols=[]; let inQ=false, cur="";
+    for (const c of line) {
+      if (c==='"') inQ=!inQ;
+      else if (c===','&&!inQ) { cols.push(cur.trim().replace(/^"|"$/g,"")); cur=""; }
+      else cur+=c;
+    }
+    cols.push(cur.trim().replace(/^"|"$/g,""));
+    const obj={};
+    headers.forEach((h,i)=>obj[h]=cols[i]||"");
+    return obj;
+  });
+}
+
+// ── number helpers ───────────────────────────────────────────────────────────
+
+function pn(v) {
+  if (!v) return null;
+  const s=v.toString().trim().replace(/,/g,"");
+  if (!s||s==="nan"||s==="-") return null;
+  if (s.endsWith("K")) return parseFloat(s)*1000;
+  if (s.endsWith("M")) return parseFloat(s)*1000000;
+  const n=parseFloat(s.replace(/%/g,"").replace(/x$/i,""));
+  return isNaN(n)?null:n;
+}
+
+function fmtPct(n, dec=0) {
+  if (n===null||n===undefined) return "—";
+  return (n>=0?"+":"")+n.toFixed(dec)+"%";
+}
+
+function fmtBigNum(n) {
+  if (n===null) return "—";
+  if (n>=1000000) return (n/1000000).toFixed(1)+"M";
+  if (n>=1000) return (n/1000).toFixed(1)+"K";
+  return Math.round(n).toString();
+}
+
+function momCount(cur,prev) {
+  const c=pn(cur),p=pn(prev);
+  if (!c||!p||p===0) return "—";
+  return fmtPct((c/p-1)*100);
+}
+
+function momRate(cur,prev) {
+  const c=pn(cur),p=pn(prev);
+  if (!c||!p||p===0) return "—";
+  return fmtPct((c/p-1)*100);
+}
+
+function yoyFromCol(val) {
+  const s=val?val.toString().trim():"";
+  return (!s||s==="nan"||s==="-")?"—":s;
+}
+
+// H1 pacing: show col value only if H1 Goal col is not nan
+function h1Pacing(row, goalCol, pacingCol) {
+  const goal = row ? row[goalCol] : null;
+  const pacing = row ? row[pacingCol] : null;
+  const goalVal = pn(goal);
+  const pacingStr = pacing ? pacing.toString().trim() : "";
+  if (!goalVal || !pacingStr || pacingStr === "nan") return "NA";
+  return pacingStr;
+}
+
+// ── CHN extraction ───────────────────────────────────────────────────────────
+
+function extractCHN(rows, territory, monthStr) {
+  const C = buildColIndex(rows, monthStr, CHN_STATIC.MONTH_START, CHN_STATIC.YOY_START);
+  const secIdx={};
+  rows.forEach((row,i)=>{
+    const v=(row[0]||"").trim();
+    if(v&&!secIdx[v]) secIdx[v]=i;
+  });
+  function findRow(section) {
+    const start=secIdx[section]; if(start===undefined) return null;
+    for(let i=start+1;i<Math.min(start+30,rows.length);i++)
+      if((rows[i][CHN_STATIC.LABEL]||"").trim()===territory) return rows[i];
+    return null;
+  }
+  const raw={};
+  for(const [k,s] of Object.entries(CHN_SECTIONS)) raw[k]=findRow(s);
+
+  function metric(key) {
+    const row=raw[key]; if(!row) return null;
+    const cur=C.cur!==null?(row[C.cur]||""):"";
+    const prev=C.prev!==null?(row[C.prev]||""):"";
+    return {
+      current: cur||"—",
+      mom: RATE_METRICS.has(key)?momRate(cur,prev):momCount(cur,prev),
+      yoy: C.yoy!==null?yoyFromCol(row[C.yoy]):"—",
+      h1: h1Pacing(row, C.h1goal, C.h1pac),
+    };
+  }
+
+  // Traffic→Conn %: calculated each period
+  const fr=raw.ftt, cr=raw.conn;
+  function tcR(fRow,cRow,col) {
+    if(col===null) return null;
+    const f=pn(fRow?fRow[col]:null),c=pn(cRow?cRow[col]:null);
+    return (f&&c&&f>0)?c/f*100:null;
+  }
+  const tCur=tcR(fr,cr,C.cur), tPrev=tcR(fr,cr,C.prev), tYP=tcR(fr,cr,C.yp);
+
+  return {
+    ftt:metric("ftt"), conn:metric("conn"),
+    tc:{
+      current: tCur!==null?tCur.toFixed(1)+"%":"—",
+      mom: (tCur!==null&&tPrev!==null&&tPrev!==0)?fmtPct((tCur/tPrev-1)*100):"—",
+      yoy: (tCur!==null&&tYP!==null&&tYP!==0)?fmtPct((tCur/tYP-1)*100):"—",
+      h1:"NA", isCalc:true,
+    },
+    totalNAL:metric("totalNAL"), nonMPNAL:metric("nonMPNAL"),
+    totalNML:metric("totalNML"), mpNML:metric("mpNML"),
+    connAct:metric("connAct"), nb:metric("nb"),
+    quality:metric("quality"), respRate:metric("respRate"),
+    _raw: raw, _C: C,
+  };
+}
+
+// ── Platform NB extraction ───────────────────────────────────────────────────
+
+// Some CHN territories need to be summed from platform sub-territories
+const PLAT_ROLLUPS = {
+  "FR": ["FR - West & Paris","FR - South","FR - North, Alps & Central"],
+  "US": ["US - Adventure and Rocky Mountain","US - Great Lake & Smoky Mountain",
+         "US - Southeast & Gulf","US - West Coast & Beach","US - Northeast Atlantic"],
+};
+
+function extractPlatformNB(rows, territory) {
+  const subTerrs = PLAT_ROLLUPS[territory];
+  let matchRows;
+  if (subTerrs) {
+    matchRows = rows.filter(r => subTerrs.includes((r.dim_territory||"").trim()));
+  } else {
+    matchRows = rows.filter(r => (r.dim_territory||"").trim() === territory);
+  }
+  if (!matchRows.length) return null;
+  // Sum across matched rows
+  const sum = (key) => matchRows.reduce((acc,r) => acc + (pn(r[key])||0), 0);
+  const nb  = sum("nights_booked");
+  const mp  = sum("nights_booked_month_prior");
+  const yp  = sum("nights_booked_year_prior");
+  return {
+    nb:     fmtBigNum(nb),
+    mom:    mp ? fmtPct((nb/mp-1)*100) : "—",
+    yoy:    yp ? fmtPct((nb/yp-1)*100) : "—",
+    raw:    nb,
+    prior:  mp,
+    yPrior: yp,
+  };
+}
+
+// ── Ambassador (SHA) extraction ──────────────────────────────────────────────
+
+function extractSHA(rows, territory, monthStr) {
+  const mappedName=AMB_MAP[territory]; if(!mappedName) return null;
+  const C = buildColIndex(rows, monthStr, AMB_STATIC.MONTH_START, AMB_STATIC.YOY_START);
+  let dataRow=null;
+  for(const row of rows)
+    if((row[0]||"").trim()==="Attributable NALs"&&(row[2]||"").trim()===mappedName) { dataRow=row; break; }
+  if(!dataRow) return null;
+  const cur  = C.cur!==null?(dataRow[C.cur]||""):"";
+  const prev = C.prev!==null?(dataRow[C.prev]||""):"";
+  const yp   = C.yp!==null?(dataRow[C.yp]||""):"";
+  const c=pn(cur), y=pn(yp);
+  return {
+    current: cur||"—",
+    mom: momCount(cur,prev),
+    yoy: (c&&y&&y!==0)?fmtPct((c/y-1)*100):"—",
+    h1: h1Pacing(dataRow, C.h1goal, C.h1pac),
+  };
+}
+
+// ── Referrals extraction ─────────────────────────────────────────────────────
+
+function extractReferrals(rows, territory, monthStr) {
+  const mappedName=REF_MAP[territory]; if(!mappedName) return null;
+  const C = buildColIndex(rows, monthStr, REF_STATIC.MONTH_START, REF_STATIC.YOY_START);
+  // Find anchor: col1="Global", col2="Attributable NALs"
+  let anchor=-1;
+  for(let i=0;i<rows.length;i++)
+    if((rows[i][1]||"").trim()==="Global"&&(rows[i][2]||"").trim()==="Attributable NALs") { anchor=i; break; }
+  if(anchor===-1) return null;
+  let dataRow=null;
+  for(let i=anchor+1;i<Math.min(anchor+200,rows.length);i++) {
+    if((rows[i][1]||"").trim()==="Global") break;
+    if((rows[i][0]||"").trim()==="Homes"&&(rows[i][2]||"").trim()===mappedName) { dataRow=rows[i]; break; }
+  }
+  if(!dataRow) return null;
+  const cur  = C.cur!==null?(dataRow[C.cur]||""):"";
+  const prev = C.prev!==null?(dataRow[C.prev]||""):"";
+  const yp   = C.yp!==null?(dataRow[C.yp]||""):"";
+  const c=pn(cur), y=pn(yp);
+  return {
+    current: cur||"—",
+    mom: momCount(cur,prev),
+    yoy: (c&&y&&y!==0)?fmtPct((c/y-1)*100):"—",
+  };
+}
+
+// ── Vs Platform % calc ───────────────────────────────────────────────────────
+
+function calcVsPlatPct(chnNB_raw, chnNB_jan, chnNB_feb25, plat) {
+  if (!plat || !chnNB_raw || !plat.raw) return { pct:"—", mom:"—", yoy:"—" };
+  const shareFeb = chnNB_raw / plat.raw;
+  const shareJan = (chnNB_jan && plat.prior && plat.prior>0) ? chnNB_jan/plat.prior : null;
+  const shareFeb25 = (chnNB_feb25 && plat.yPrior && plat.yPrior>0) ? chnNB_feb25/plat.yPrior : null;
+  return {
+    pct: (shareFeb*100).toFixed(1)+"%",
+    mom: shareJan ? fmtPct((shareFeb/shareJan-1)*100) : "—",
+    yoy: shareFeb25 ? fmtPct((shareFeb/shareFeb25-1)*100) : "—",
+  };
+}
+
+// ── UI ───────────────────────────────────────────────────────────────────────
+
+function pctColor(val) {
+  if(!val||val==="—"||val==="NA") return "#888";
+  const n=parseFloat(val.toString().replace(/[+%x]/g,""));
+  if(isNaN(n)) return "#111";
+  if(n<0) return "#C0392B"; if(n>0) return "#1A7A4A";
+  return "#888";
+}
+
+function MRow({label,data,indent,isCalc}) {
+  return (
+    <tr>
+      <td className={indent?"indent":"left"}>
+        {label}{isCalc&&<span style={{fontSize:10,color:"#bbb",marginLeft:4,fontStyle:"normal"}}>(calc)</span>}
+      </td>
+      <td>{data?.current||"—"}</td>
+      <td style={{color:pctColor(data?.mom),fontWeight:500}}>{data?.mom||"—"}</td>
+      <td style={{color:pctColor(data?.yoy),fontWeight:500}}>{data?.yoy||"—"}</td>
+      <td style={{color:"#888"}}>{data?.h1??"NA"}</td>
+    </tr>
+  );
+}
+
+function UploadBox({label,hint,required,loaded,name,onClick}) {
+  return (
+    <div>
+      <label style={{marginBottom:5}}>
+        {label}
+        {required ? <span style={{color:"#C0392B",marginLeft:3}}>*</span>
+                  : <span style={{color:"#aaa",fontWeight:400,marginLeft:4}}>(optional)</span>}
+      </label>
+      <div className={`drop-zone${loaded?" loaded":""}`} onClick={onClick} style={{minHeight:68}}>
+        <div style={{fontSize:18,marginBottom:3}}>{loaded?"✅":"📂"}</div>
+        <p style={{fontSize:12,fontWeight:500,margin:"0 0 2px",color:loaded?"#2E7D32":"#111"}}>{loaded?name:label}</p>
+        <p style={{fontSize:11,color:loaded?"#4CAF50":"#888",margin:0}}>{loaded?"Loaded · click to replace":hint}</p>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [step,setStep]=useState("upload");
+  const [files,setFiles]=useState({chn:null,plat:null,sha:null,ref:null});
+  const [names,setNames]=useState({chn:"",plat:"",sha:"",ref:""});
+  const [territory,setTerritory]=useState("US - Northeast Atlantic");
+  const [month,setMonth]=useState("February 2026");
+  const [highlights,setHighlights]=useState([{text:"",type:"highlight"},{text:"",type:"highlight"},{text:"",type:"highlight"},{text:"",type:"highlight"}]);
+  const [metrics,setMetrics]=useState(null);
+  const chnRef=useRef(), platRef=useRef(), shaRef=useRef(), refRef=useRef();
+
+  const loadFile=(file,key,keyed=false)=>{
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const parsed=keyed?parseKeyedCSV(ev.target.result):parseRawCSV(ev.target.result);
+      setFiles(p=>({...p,[key]:parsed}));
+      setNames(p=>({...p,[key]:file.name}));
+    };
+    reader.readAsText(file);
+  };
+
+  const generate=()=>{
+    const chn=extractCHN(files.chn,territory,month);
+    const plat=files.plat?extractPlatformNB(files.plat,territory):null;
+    const sha=files.sha?extractSHA(files.sha,territory,month):null;
+    const ref=files.ref?extractReferrals(files.ref,territory,month):null;
+    setMetrics({chn,plat,sha,ref});
+    setStep("preview");
+  };
+
+  const setHL=(i,k,v)=>{const n=[...highlights];n[i]={...n[i],[k]:v};setHighlights(n);};
+
+  if(step==="upload"||step==="configure") return (
+    <div style={{maxWidth:720}}>
+      <h1>BoM Slide Filler</h1>
+      <p className="sub">Territory-Level Monthly Scorecard</p>
+      <p className="section-title">Step 1 — Upload data files</p>
+      <div className="grid-2" style={{marginBottom:10}}>
+        <UploadBox label="CHN Metrics" hint="Territory Deep-dive CSV" required
+          loaded={!!files.chn} name={names.chn} onClick={()=>chnRef.current.click()}/>
+        <UploadBox label="Platform Nights Booked" hint="Superset sqllab export CSV" required
+          loaded={!!files.plat} name={names.plat} onClick={()=>platRef.current.click()}/>
+      </div>
+      <div className="grid-2" style={{marginBottom:24}}>
+        <UploadBox label="Ambassador (SHA) Metrics" hint="Ambassadors Territory Deep-dive CSV" required
+          loaded={!!files.sha} name={names.sha} onClick={()=>shaRef.current.click()}/>
+        <UploadBox label="Host Referrals Metrics" hint="Host Referrals Territory Deep-dive CSV" required
+          loaded={!!files.ref} name={names.ref} onClick={()=>refRef.current.click()}/>
+      </div>
+      <input ref={chnRef}  type="file" accept=".csv" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0],"chn",false)}/>
+      <input ref={platRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0],"plat",true)}/>
+      <input ref={shaRef}  type="file" accept=".csv" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0],"sha",false)}/>
+      <input ref={refRef}  type="file" accept=".csv" style={{display:"none"}} onChange={e=>loadFile(e.target.files[0],"ref",false)}/>
+
+      {files.chn && files.plat && files.sha && files.ref && <>
+        <hr className="divider"/>
+        <p className="section-title">Step 2 — Configure</p>
+        <div className="grid-2" style={{marginBottom:16}}>
+          <div>
+            <label>Territory</label>
+            <select value={territory} onChange={e=>setTerritory(e.target.value)}>
+              {TERRITORIES.map(t=><option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Reporting month</label>
+            <input type="text" value={month} onChange={e=>setMonth(e.target.value)}/>
+          </div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <label>Highlights & Lowlights</label>
+          {highlights.map((h,i)=>(
+            <div key={i} style={{marginBottom:10}}>
+              <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"center"}}>
+                <span style={{fontSize:12,color:"#888",minWidth:16}}>{i+1}.</span>
+                {["highlight","lowlight","neutral"].map(t=>(
+                  <button key={t} onClick={()=>setHL(i,"type",t)} style={{
+                    padding:"3px 10px", fontSize:11, fontWeight:500,
+                    borderRadius:20, cursor:"pointer",
+                    background: h.type===t ? (t==="highlight"?"#C8E6C9":t==="lowlight"?"#FFCDD2":"#E0E0E0") : "transparent",
+                    borderColor: t==="highlight"?"#A5D6A7":t==="lowlight"?"#EF9A9A":"#BDBDBD",
+                    color: t==="highlight"?"#1B5E20":t==="lowlight"?"#B71C1C":"#555",
+                  }}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
+                ))}
+              </div>
+              <textarea value={h.text} onChange={e=>setHL(i,"text",e.target.value)}
+                placeholder={`${h.type.charAt(0).toUpperCase()+h.type.slice(1)} ${i+1}...`}
+                style={{height:52,resize:"vertical",display:"block",width:"100%"}}/>
+            </div>
+          ))}
+        </div>
+        <button className="btn-primary" onClick={generate}>Generate slide preview →</button>
+      </>}
+      {!(files.chn && files.plat && files.sha && files.ref) && (
+          <div style={{marginTop:12, fontSize:12, color:"#888", lineHeight:1.8}}>
+            <p style={{margin:"0 0 4px", fontWeight:500, color:"#555"}}>Upload all four CSVs to continue:</p>
+            <div>{files.chn ? "✅" : "○"} CHN Territory Deep-dive</div>
+            <div>{files.plat ? "✅" : "○"} Platform Nights Booked — <span style={{color:"#C0392B"}}>remember to update the reference date in the Superset query to the month you want before exporting</span></div>
+            <div>{files.sha ? "✅" : "○"} Ambassador (SHA) Territory Deep-dive</div>
+            <div>{files.ref ? "✅" : "○"} Host Referrals Territory Deep-dive</div>
+          </div>
+        )}
+    </div>
+  );
+
+  if(step==="preview"&&metrics) {
+    const {chn,plat,sha,ref}=metrics;
+    const chnNBraw = pn(chn.nb?.current);
+    const chnNBjan = pn(chn._raw?.nb && chn._C?.prev!==null ? chn._raw.nb[chn._C.prev] : null);
+    const chnNBfeb25 = pn(chn._raw?.nb && chn._C?.yp!==null ? chn._raw.nb[chn._C.yp] : null);
+    const vsp = calcVsPlatPct(chnNBraw, chnNBjan, chnNBfeb25, plat);
+
+    return (
+      <div style={{maxWidth:920}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+          <div>
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+              <span className="badge">CGMs</span>
+              <span style={{fontSize:16,fontWeight:500}}>Territory-Level Monthly Scorecard</span>
+            </div>
+            <p style={{margin:0,fontSize:13,color:"#666"}}>{territory} · {month}</p>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setStep("upload")}>← Edit</button>
+            <button onClick={()=>{setFiles({chn:null,plat:null,sha:null,ref:null});setNames({chn:"",plat:"",sha:"",ref:""});setStep("upload");}}>New files</button>
+          </div>
+        </div>
+
+        <div className="grid-2" style={{alignItems:"start"}}>
+          <div className="card">
+            <table>
+              <thead>
+                <tr>
+                  <th className="left" style={{width:"44%"}}>Metric</th>
+                  <th>#</th><th>M/M</th><th>Y/Y</th><th>H1 pacing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="sec-row"><td colSpan={5} className="left">CHN</td></tr>
+                <MRow label="First Time Traffic"               data={chn.ftt}/>
+                <MRow label="Connections"                      data={chn.conn} indent/>
+                <MRow label="Traffic → Connections %"          data={chn.tc} indent isCalc/>
+                <MRow label="Total NALs"                       data={chn.totalNAL}/>
+                <MRow label="Non-Marketplace NALs"             data={chn.nonMPNAL} indent/>
+                <MRow label="Total NMLs"                       data={chn.totalNML}/>
+                <MRow label="Marketplace NMLs (Activations)"   data={chn.mpNML} indent/>
+                <MRow label="Connections → Activation % (90d)" data={chn.connAct} indent/>
+                <MRow label="Nights Booked"                    data={chn.nb}/>
+                {/* Vs. Platform: # = platform NB, M/M & Y/Y = platform's own changes */}
+                <tr>
+                  <td className="indent" style={{borderBottom:"0.5px solid #eee"}}>Vs. Platform</td>
+                  <td style={{borderBottom:"0.5px solid #eee"}}>{plat?plat.nb:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(plat?.mom),fontWeight:500}}>{plat?plat.mom:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(plat?.yoy),fontWeight:500}}>{plat?plat.yoy:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:"#888"}}>NA</td>
+                </tr>
+                {/* Vs. Platform (%): CHN share of platform, and share change MoM/YoY */}
+                <tr>
+                  <td className="indent" style={{borderBottom:"0.5px solid #eee"}}>Vs. Platform (%)</td>
+                  <td style={{borderBottom:"0.5px solid #eee"}}>{vsp.pct}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(vsp.mom),fontWeight:500}}>{vsp.mom}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(vsp.yoy),fontWeight:500}}>{vsp.yoy}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:"#888"}}>NA</td>
+                </tr>
+                <MRow label="Quality"       data={chn.quality}/>
+                <MRow label="Response Rate" data={chn.respRate} indent/>
+                <tr className="sec-row"><td colSpan={5} className="left">SHA</td></tr>
+                <tr>
+                  <td className="left" style={{borderBottom:"0.5px solid #eee"}}>NALs</td>
+                  <td style={{borderBottom:"0.5px solid #eee"}}>{sha?sha.current:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(sha?.mom),fontWeight:500}}>{sha?sha.mom:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:pctColor(sha?.yoy),fontWeight:500}}>{sha?sha.yoy:"—"}</td>
+                  <td style={{borderBottom:"0.5px solid #eee",color:"#888"}}>{sha?sha.h1:"NA"}</td>
+                </tr>
+                <tr className="sec-row"><td colSpan={5} className="left">Referrals</td></tr>
+                <tr>
+                  <td className="left">NALs</td>
+                  <td>{ref?ref.current:"—"}</td>
+                  <td style={{color:pctColor(ref?.mom),fontWeight:500}}>{ref?ref.mom:"—"}</td>
+                  <td style={{color:pctColor(ref?.yoy),fontWeight:500}}>{ref?ref.yoy:"—"}</td>
+                  <td style={{color:"#888"}}>NA</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:12}}>
+              {highlights.map((h,i)=>{
+                if(!h.text) return null;
+                const bg = h.type==="highlight"?"#E8F5E9":h.type==="lowlight"?"#FFEBEE":"#F5F5F5";
+                const border = h.type==="highlight"?"#A5D6A7":h.type==="lowlight"?"#EF9A9A":"#BDBDBD";
+                return (
+                  <div key={i} style={{background:bg,border:`0.5px solid ${border}`,borderRadius:10,padding:"12px 14px"}}>
+                    <p style={{fontSize:13,margin:0,lineHeight:1.6}}>{h.text}</p>
+                  </div>
+                );
+              })}
+              {highlights.every(h=>!h.text)&&<p style={{fontSize:13,color:"#888",fontStyle:"italic",margin:0}}>No highlights added.</p>}
+            </div>
+            <div className="sourcing">
+              <p className="sourcing-label">Data sourcing</p>
+              <div style={{fontSize:12,color:"#666",lineHeight:2}}>
+                <div style={{color:"#1A7A4A"}}>✓ CHN metrics → Territory Deep-dive CSV</div>
+                <div style={{color:plat?"#1A7A4A":"#FFA726"}}>{plat?"✓":"⚠"} Platform NB → {plat?"Superset CSV":"not uploaded"}</div>
+                <div style={{color:sha?"#1A7A4A":"#FFA726"}}>{sha?"✓":"⚠"} SHA NALs → {sha?"Ambassador CSV":"not uploaded"}</div>
+                <div style={{color:ref?"#1A7A4A":"#FFA726"}}>{ref?"✓":"⚠"} Referral NALs → {ref?"Host Referrals CSV":"not uploaded"}</div>
+                <div style={{color:"#999",fontSize:11,marginTop:4,lineHeight:1.7}}>
+                  H1 pacing = pre-calc HTD pacing (shown only where H1 goal exists)<br/>
+                  Vs. Platform % = CHN NB ÷ platform NB (share of platform)<br/>
+                  MoM/YoY on share = change in CHN's share of platform<br/>
+                  SHA &amp; Referral YoY = Feb 26 / Feb 25 − 1 (calculated)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
